@@ -2,12 +2,14 @@ from flask import Flask, render_template, request, jsonify, current_app
 from github import Github
 from github.PaginatedList import PaginatedList
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import os
 from dotenv import load_dotenv
 from functools import lru_cache
 import time
+import sys
+import traceback
 
 # Load biến môi trường từ file .env
 load_dotenv()
@@ -27,6 +29,10 @@ GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 MAX_PRS = int(os.getenv('MAX_PRS', '100'))
 # Thời gian cache (1 giờ)
 CACHE_TIMEOUT = int(os.getenv('CACHE_TIMEOUT', '3600'))
+# Thời gian timeout cho GitHub API (30 giây)
+GITHUB_TIMEOUT = int(os.getenv('GITHUB_TIMEOUT', '30'))
+# Ngày bắt đầu mặc định (30 ngày trước)
+DEFAULT_SINCE_DATE = os.getenv('DEFAULT_SINCE_DATE', (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'))
 
 def get_system_info():
     """Trả về thông tin hệ thống cho templates"""
@@ -121,9 +127,11 @@ def fetch_and_parse_prs(org_name, label, since_date):
     cache_key = f"{org_name}_{label}_{since_date}"
 
     try:
-        g = Github(GITHUB_TOKEN)
+        # Thiết lập timeout cho GitHub API
+        g = Github(GITHUB_TOKEN, timeout=GITHUB_TIMEOUT)
         org = g.get_organization(org_name)
         query = f'org:{org_name} is:pr label:"{label}" created:>={since_date}'
+        logger.info(f"GitHub API query: {query}")
 
         prs = g.search_issues(query=query)
         total_count = min(prs.totalCount, MAX_PRS)
@@ -203,39 +211,114 @@ def fetch_and_parse_prs(org_name, label, since_date):
 @app.route('/health')
 def health_check():
     """Endpoint kiểm tra trạng thái ứng dụng"""
-    status = {
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat(),
-        'github_token': 'configured' if GITHUB_TOKEN else 'missing',
-        'max_prs': MAX_PRS,
-        'cache_timeout': CACHE_TIMEOUT
-    }
-    return jsonify(status)
+    try:
+        # Kiểm tra kết nối đến GitHub API
+        github_status = 'error'
+        error_message = None
+        
+        if GITHUB_TOKEN:
+            try:
+                g = Github(GITHUB_TOKEN, timeout=5)  # Timeout ngắn cho health check
+                # Thử một API call đơn giản
+                _ = g.get_rate_limit()
+                github_status = 'connected'
+            except Exception as e:
+                github_status = 'error'
+                error_message = str(e)
+        else:
+            github_status = 'not_configured'
+        
+        status = {
+            'status': 'healthy',
+            'timestamp': datetime.now().isoformat(),
+            'github_token': 'configured' if GITHUB_TOKEN else 'missing',
+            'github_api_status': github_status,
+            'github_error': error_message,
+            'max_prs': MAX_PRS,
+            'cache_timeout': CACHE_TIMEOUT,
+            'github_timeout': GITHUB_TIMEOUT,
+            'default_since_date': DEFAULT_SINCE_DATE,
+            'environment': os.getenv('FLASK_ENV', 'development')
+        }
+        return jsonify(status)
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
 @app.route('/', methods=['GET'])
 def index():
+    # Lấy tham số từ request hoặc sử dụng giá trị mặc định
+    org_name = request.args.get('org', 'AperoVN')
+    label = request.args.get('label', 'AI Generate')
+    since_date = request.args.get('since', DEFAULT_SINCE_DATE)
+    
+    logger.info(f"Processing request for org={org_name}, label={label}, since={since_date}")
+    
     if not GITHUB_TOKEN:
         error_message = "GitHub Token chưa được cấu hình. Vui lòng kiểm tra biến môi trường GITHUB_TOKEN."
         logger.error(error_message)
         return render_template('error.html', error=error_message, **get_system_info())
 
     try:
+        start_time = time.time()
+        logger.info(f"Starting data fetch at {datetime.now().isoformat()}")
+        
         # Sử dụng cache để lấy dữ liệu
-        cache_result = fetch_and_parse_prs('AperoVN', 'AI Generate', '2025-04-29')
+        cache_result = fetch_and_parse_prs(org_name, label, since_date)
+        
+        fetch_time = time.time() - start_time
+        logger.info(f"Data fetch completed in {fetch_time:.2f} seconds")
 
         # Kết hợp dữ liệu với system info
         template_data = {
             **get_system_info(),
             'prs': cache_result['prs_data'],
-            'stats': cache_result['stats']
+            'stats': cache_result['stats'],
+            'org_name': org_name,
+            'label': label,
+            'since_date': since_date,
+            'fetch_time': f"{fetch_time:.2f}s"
         }
 
         return render_template('result.html', **template_data)
 
     except Exception as e:
-        error_message = f"Lỗi khi xử lý dữ liệu: {str(e)}"
-        logger.error(error_message, exc_info=True)
+        # Ghi log chi tiết lỗi
+        logger.error(f"Exception in index route: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Chuẩn bị thông báo lỗi chi tiết
+        error_type = type(e).__name__
+        error_message = f"Lỗi khi xử lý dữ liệu: {error_type}: {str(e)}"
+        
+        # Thêm thông tin về timeout nếu có thể là lỗi timeout
+        if "timeout" in str(e).lower() or "time out" in str(e).lower():
+            error_message += f"\n\nLỗi có thể do timeout khi gọi GitHub API. Timeout hiện tại: {GITHUB_TIMEOUT}s"
+            error_message += "\nThử tăng giá trị GITHUB_TIMEOUT trong biến môi trường hoặc giảm phạm vi tìm kiếm."
+        
         return render_template('error.html', error=error_message, **get_system_info())
+
+# Thêm route để xóa cache khi cần thiết
+@app.route('/clear-cache', methods=['GET'])
+def clear_cache():
+    try:
+        fetch_and_parse_prs.cache_clear()
+        return jsonify({
+            'status': 'success',
+            'message': 'Cache cleared successfully',
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error clearing cache: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Error clearing cache: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
 if __name__ == '__main__':
     # Chạy ứng dụng với cấu hình từ biến môi trường
@@ -248,5 +331,8 @@ if __name__ == '__main__':
     logger.info(f"GitHub token status: {'configured' if GITHUB_TOKEN else 'missing'}")
     logger.info(f"Max PRs per request: {MAX_PRS}")
     logger.info(f"Cache timeout: {CACHE_TIMEOUT} seconds")
+    logger.info(f"GitHub API timeout: {GITHUB_TIMEOUT} seconds")
+    logger.info(f"Default since date: {DEFAULT_SINCE_DATE}")
+    logger.info(f"Python version: {sys.version}")
 
     app.run(debug=debug, host='0.0.0.0', port=port)
