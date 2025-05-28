@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Error - GitHub PR Analysis</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h4 class="mb-0">Lỗi</h4>
+                </div>
+                <div class="card-body">
+                    <h5 class="card-title">Không thể xử lý yêu cầu</h5>
+                    <p class="card-text">{{ error }}</p>
+
+                    {% if 'GITHUB_TOKEN' in error %}
+                    <div class="alert alert-info mt-3">
+                        <h6>Hướng dẫn cấu hình GitHub Token:</h6>
+                        <ol>
+                            <li>Tạo một GitHub Personal Access Token với quyền truy cập vào repositories</li>
+                            <li>Thêm token vào file .env:</li>
+                            <code>GITHUB_TOKEN=your_token_here</code>
+                            <li>Hoặc thiết lập biến môi trường GITHUB_TOKEN khi chạy container:</li>
+                            <code>docker run -e GITHUB_TOKEN=your_token_here ...</code>
+                        </ol>
+                    </div>
+                    {% endif %}
+
+                    <div class="mt-4">
+                        <a href="/" class="btn btn-primary">Thử lại</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Thông tin hệ thống</h5>
+                </div>
+                <div class="card-body">
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item">
+                            <strong>Thời gian:</strong> {{ now }}
+                        </li>
+                        <li class="list-group-item">
+                            <strong>GitHub Token:</strong>
+                            {% if github_token %}
+                            <span class="badge bg-success">Đã cấu hình</span>
+                            {% else %}
+                            <span class="badge bg-danger">Chưa cấu hình</span>
+                            {% endif %}
+                        </li>
+                        <li class="list-group-item">
+                            <strong>Debug Mode:</strong>
+                            {% if debug %}
+                            <span class="badge bg-warning">Enabled</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Disabled</span>
+                            {% endif %}
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

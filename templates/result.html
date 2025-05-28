@@ -8,6 +8,17 @@
     <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
     <script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap5.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .efficiency-high {
+            color: green;
+        }
+        .efficiency-medium {
+            color: orange;
+        }
+        .efficiency-low {
+            color: red;
+        }
+    </style>
 </head>
 <body>
 <div class="container-fluid mt-5">
@@ -42,8 +53,13 @@
         <div class="col-md-3">
             <div class="card">
                 <div class="card-body">
-                    <h5 class="card-title">Số lượng Developers</h5>
-                    <p class="card-text display-6">{{ stats.developers|length }}</p>
+                    <h5 class="card-title">Hiệu suất trung bình</h5>
+                    {% set total_efficiency = (stats.total_estimate / stats.total_actual * 100) if stats.total_actual >
+                    0 else 100 %}
+                    <p class="card-text display-6 
+                        {{'efficiency-high' if total_efficiency >= 90 else 'efficiency-medium' if total_efficiency >= 70 else 'efficiency-low'}}">
+                        {{ "%.1f"|format(total_efficiency) }}%
+                    </p>
                 </div>
             </div>
         </div>
@@ -81,19 +97,21 @@
                     <th>Thời gian ước tính (h)</th>
                     <th>Thời gian thực tế (h)</th>
                     <th>Chênh lệch (h)</th>
-                    <th>Tỉ lệ hoàn thành</th>
+                    <th>Hiệu suất</th>
                 </tr>
                 </thead>
                 <tbody>
                 {% for dev, dev_stats in stats.developers.items() %}
+                {% set efficiency = (dev_stats.total_estimate / dev_stats.total_actual * 100) if dev_stats.total_actual
+                > 0 else 100 %}
                 <tr>
                     <td>{{ dev }}</td>
                     <td>{{ dev_stats.total_prs }}</td>
                     <td>{{ "%.2f"|format(dev_stats.total_estimate) }}</td>
                     <td>{{ "%.2f"|format(dev_stats.total_actual) }}</td>
                     <td>{{ "%.2f"|format(dev_stats.total_actual - dev_stats.total_estimate) }}</td>
-                    <td>{{ "%.1f"|format(dev_stats.total_actual / dev_stats.total_estimate * 100 if
-                        dev_stats.total_estimate > 0 else 100) }}%
+                    <td class="{{'efficiency-high' if efficiency >= 90 else 'efficiency-medium' if efficiency >= 70 else 'efficiency-low'}}">
+                        {{ "%.1f"|format(efficiency) }}%
                     </td>
                 </tr>
                 {% endfor %}
@@ -113,16 +131,22 @@
                     <th>Số lượng PRs</th>
                     <th>Thời gian ước tính (h)</th>
                     <th>Thời gian thực tế (h)</th>
+                    <th>Hiệu suất</th>
                     <th>Developers</th>
                 </tr>
                 </thead>
                 <tbody>
                 {% for project, project_stats in stats.projects.items() %}
+                {% set efficiency = (project_stats.total_estimate / project_stats.total_actual * 100) if
+                project_stats.total_actual > 0 else 100 %}
                 <tr>
                     <td>{{ project }}</td>
                     <td>{{ project_stats.total_prs }}</td>
                     <td>{{ "%.2f"|format(project_stats.total_estimate) }}</td>
                     <td>{{ "%.2f"|format(project_stats.total_actual) }}</td>
+                    <td class="{{'efficiency-high' if efficiency >= 90 else 'efficiency-medium' if efficiency >= 70 else 'efficiency-low'}}">
+                        {{ "%.1f"|format(efficiency) }}%
+                    </td>
                     <td>{{ project_stats.developers|join(", ") }}</td>
                 </tr>
                 {% endfor %}
@@ -143,18 +167,25 @@
                     <th>Creator</th>
                     <th>Estimate Time</th>
                     <th>Actual Time</th>
+                    <th>Hiệu suất</th>
                     <th>Created Date</th>
                     <th>Link</th>
                 </tr>
                 </thead>
                 <tbody>
                 {% for pr in prs %}
+                {% set estimate = pr.estimate_time.replace('h', '') | float %}
+                {% set actual = pr.actual_time.replace('h', '') | float %}
+                {% set efficiency = (estimate / actual * 100) if actual > 0 else 100 %}
                 <tr>
                     <td>{{ pr.issue_number }}</td>
                     <td>{{ pr.title }}</td>
                     <td>{{ pr.creator }}</td>
                     <td>{{ pr.estimate_time }}</td>
                     <td>{{ pr.actual_time }}</td>
+                    <td class="{{'efficiency-high' if efficiency >= 90 else 'efficiency-medium' if efficiency >= 70 else 'efficiency-low'}}">
+                        {{ "%.1f"|format(efficiency) }}%
+                    </td>
                     <td>{{ pr.created_at }}</td>
                     <td><a href="{{ pr.url }}" target="_blank">View PR</a></td>
                 </tr>
@@ -169,7 +200,7 @@
     // DataTable initialization
     $(document).ready(function() {
         $('#prsTable').DataTable({
-            order: [[5, 'desc']],
+            order: [[6, 'desc']],
             pageLength: 25
         });
         $('#developerTable').DataTable({

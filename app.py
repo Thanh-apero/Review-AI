@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
 from github import Github
 import re
 from datetime import datetime
@@ -18,10 +18,17 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Kiểm tra token GitHub có tồn tại
+# Lấy GitHub token từ biến môi trường
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
-if not GITHUB_TOKEN:
-    raise ValueError("GITHUB_TOKEN is not set in environment variables")
+
+
+def get_system_info():
+    """Trả về thông tin hệ thống cho templates"""
+    return {
+        'now': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'github_token': bool(GITHUB_TOKEN),
+        'debug': os.getenv('FLASK_DEBUG', '0') == '1'
+    }
 
 
 def convert_to_hours(time_str):
@@ -48,7 +55,6 @@ def convert_to_hours(time_str):
 
     return 0
 
-
 def get_project_id(issue_number):
     """Trích xuất ID project từ issue number (VD: AIP123-456 -> AIP123)"""
     if issue_number and issue_number != 'N/A':
@@ -56,7 +62,6 @@ def get_project_id(issue_number):
         if match:
             return match.group(1).upper()  # Chuẩn hóa về dạng viết hoa
     return 'Unknown'
-
 
 def parse_pr_info(title, body):
     logger.info("=" * 50)
@@ -103,8 +108,24 @@ def parse_pr_info(title, body):
     return parsed_result
 
 
+@app.route('/health')
+def health_check():
+    """Endpoint kiểm tra trạng thái ứng dụng"""
+    status = {
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'github_token': 'configured' if GITHUB_TOKEN else 'missing'
+    }
+    return jsonify(status)
+
 @app.route('/', methods=['GET'])
 def index():
+    error_message = None
+    if not GITHUB_TOKEN:
+        error_message = "GitHub Token chưa được cấu hình. Vui lòng kiểm tra biến môi trường GITHUB_TOKEN."
+        logger.error(error_message)
+        return render_template('error.html', error=error_message, **get_system_info())
+
     try:
         logger.info("Initializing GitHub connection")
         g = Github(GITHUB_TOKEN)
@@ -185,14 +206,22 @@ def index():
 
         return render_template('result.html',
                                prs=prs_data,
-                               stats=stats)
+                               stats=stats,
+                               **get_system_info())
 
     except Exception as e:
-        logger.error(f"Error occurred: {str(e)}", exc_info=True)
-        return f"Error: {str(e)}"
-
+        error_message = f"Lỗi khi xử lý dữ liệu: {str(e)}"
+        logger.error(error_message, exc_info=True)
+        return render_template('error.html', error=error_message, **get_system_info())
 
 if __name__ == '__main__':
     # Chạy ứng dụng với cấu hình từ biến môi trường
+    port = int(os.getenv('PORT', '5000'))
     debug = os.getenv('FLASK_DEBUG', '0') == '1'
-    app.run(debug=debug, host='0.0.0.0', port=int(os.getenv('PORT', '5000')))
+
+    # Log cấu hình khi khởi động
+    logger.info(f"Starting application on port {port}")
+    logger.info(f"Debug mode: {debug}")
+    logger.info(f"GitHub token status: {'configured' if GITHUB_TOKEN else 'missing'}")
+
+    app.run(debug=debug, host='0.0.0.0', port=port)
