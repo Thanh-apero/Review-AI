@@ -25,12 +25,12 @@ app = Flask(__name__)
 
 # Lấy GitHub token từ biến môi trường
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
-# Số lượng PRs tối đa xử lý mỗi lần
-MAX_PRS = int(os.getenv('MAX_PRS', '100'))
+# Số lượng PRs tối đa xử lý mỗi lần - mặc định 1000 để lấy tất cả
+MAX_PRS = int(os.getenv('MAX_PRS', '1000'))
 # Thời gian cache (1 giờ)
 CACHE_TIMEOUT = int(os.getenv('CACHE_TIMEOUT', '3600'))
-# Thời gian timeout cho GitHub API (30 giây)
-GITHUB_TIMEOUT = int(os.getenv('GITHUB_TIMEOUT', '30'))
+# Thời gian timeout cho GitHub API (60 giây)
+GITHUB_TIMEOUT = int(os.getenv('GITHUB_TIMEOUT', '60'))
 # Ngày bắt đầu mặc định (30 ngày trước)
 DEFAULT_SINCE_DATE = os.getenv('DEFAULT_SINCE_DATE', (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'))
 
@@ -134,7 +134,17 @@ def fetch_and_parse_prs(org_name, label, since_date):
         logger.info(f"GitHub API query: {query}")
 
         prs = g.search_issues(query=query)
-        total_count = min(prs.totalCount, MAX_PRS)
+        # Lấy tổng số PRs thực tế
+        actual_total = prs.totalCount
+        logger.info(f"Found {actual_total} PRs matching the query")
+        
+        # Nếu MAX_PRS = 0, lấy tất cả PRs
+        if MAX_PRS == 0:
+            total_count = actual_total
+        else:
+            total_count = min(actual_total, MAX_PRS)
+        
+        logger.info(f"Processing {total_count} PRs")
 
         prs_data = []
         developers_stats = {}
@@ -142,9 +152,11 @@ def fetch_and_parse_prs(org_name, label, since_date):
         total_estimate = 0
         total_actual = 0
 
-        # Xử lý từng batch PRs
-        batch_size = 20
+        # Xử lý từng batch PRs với kích thước batch tối ưu
+        batch_size = 30  # Tăng kích thước batch để giảm số lần gọi API
         for i in range(0, total_count, batch_size):
+            current_batch_size = min(batch_size, total_count - i)
+            logger.info(f"Processing batch {i//batch_size + 1}, PRs {i+1}-{i+current_batch_size} of {total_count}")
             batch = list(prs[i:min(i + batch_size, total_count)])
 
             for pr in batch:
@@ -191,10 +203,12 @@ def fetch_and_parse_prs(org_name, label, since_date):
         for project in projects_stats:
             projects_stats[project]['developers'] = sorted(list(projects_stats[project]['developers']))
 
-        return {
+        result = {
             'prs_data': prs_data,
             'stats': {
                 'total_prs': len(prs_data),
+                'total_prs_found': actual_total,  # Thêm tổng số PRs tìm thấy
+                'total_prs_processed': total_count,  # Thêm tổng số PRs đã xử lý
                 'total_estimate': round(total_estimate, 2),
                 'total_actual': round(total_actual, 2),
                 'developers': developers_stats,
@@ -202,6 +216,9 @@ def fetch_and_parse_prs(org_name, label, since_date):
             },
             'timestamp': time.time()
         }
+        
+        logger.info(f"Completed processing {len(prs_data)} PRs")
+        return result
 
     except Exception as e:
         logger.error(f"Error fetching PRs: {str(e)}")
@@ -317,6 +334,30 @@ def clear_cache():
         return jsonify({
             'status': 'error',
             'message': f'Error clearing cache: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+# Thêm route để hiển thị cấu hình hiện tại
+@app.route('/config', methods=['GET'])
+def show_config():
+    try:
+        config = {
+            'max_prs': MAX_PRS,
+            'github_timeout': GITHUB_TIMEOUT,
+            'cache_timeout': CACHE_TIMEOUT,
+            'default_since_date': DEFAULT_SINCE_DATE,
+            'environment': os.getenv('FLASK_ENV', 'development'),
+            'debug_mode': os.getenv('FLASK_DEBUG', '0') == '1',
+            'github_token_configured': bool(GITHUB_TOKEN),
+            'python_version': sys.version,
+            'timestamp': datetime.now().isoformat()
+        }
+        return jsonify(config)
+    except Exception as e:
+        logger.error(f"Error showing config: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Error showing config: {str(e)}',
             'timestamp': datetime.now().isoformat()
         }), 500
 
