@@ -3,23 +3,14 @@ from github import Github
 from github.PaginatedList import PaginatedList
 import re
 from datetime import datetime, timedelta
-import logging
 import os
 from dotenv import load_dotenv
 from functools import lru_cache
 import time
 import sys
-import traceback
 
 # Load biến môi trường từ file .env
 load_dotenv()
-
-# Cấu hình logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -76,15 +67,9 @@ def get_project_id(issue_number):
 
 
 def parse_pr_info(pr):
-    logger.info("=" * 50)
-    logger.info("PR PARSING DEBUG")
-    logger.info(f"Title: [{pr.title}]")
-    logger.info(f"Body: [{pr.body}]")
-
     # Parse issue number - tìm trong cả title và body
     issue_match = re.search(r'AIP\d+-\d+', pr.title, re.IGNORECASE) or re.search(r'AIP\d+-\d+', pr.body or '',
                                                                                  re.IGNORECASE)
-    logger.info(f"Issue number pattern match: {issue_match}")
     issue_number = issue_match.group(0).upper() if issue_match else "N/A"  # Chuẩn hóa về dạng viết hoa
 
     # Parse estimate time từ body
@@ -115,36 +100,45 @@ def parse_pr_info(pr):
         'estimate_hours': estimate_hours,
         'actual_hours': actual_hours
     }
-    logger.info(f"Final parsed result: {parsed_result}")
-    logger.info("=" * 50)
     return parsed_result
 
 
-@lru_cache(maxsize=1)
-def fetch_and_parse_prs(org_name, label, since_date):
-    """Fetch và parse PRs với cache"""
-    logger.info(f"Fetching PRs for {org_name} with label {label} since {since_date}")
-    cache_key = f"{org_name}_{label}_{since_date}"
+def fetch_and_parse_prs_internal(org_name, label, since_date, until_date=None):
+    """Fetch và parse PRs - hàm nội bộ không có cache"""
 
     try:
         # Thiết lập timeout cho GitHub API
         g = Github(GITHUB_TOKEN, timeout=GITHUB_TIMEOUT)
         org = g.get_organization(org_name)
-        query = f'org:{org_name} is:pr label:"{label}" created:>={since_date}'
-        logger.info(f"GitHub API query: {query}")
-
+        
+        # Xây dựng query với date range
+        query = f'org:{org_name} is:pr'
+        
+        # Xử lý label (có thể là một hoặc nhiều label)
+        if isinstance(label, (list, tuple)) and label:
+            # Nếu là danh sách labels - sử dụng phép AND
+            label_conditions = [f'label:"{l}"' for l in label if l and l.strip()]
+            if label_conditions:
+                query += f' {" ".join(label_conditions)}'
+        elif label and isinstance(label, str):
+            # Nếu là một label duy nhất
+            query += f' label:"{label}"'
+            
+        if since_date:
+            query += f' created:>={since_date}'
+            
+        if until_date:
+            query += f' created:<={until_date}'
+            
         prs = g.search_issues(query=query)
         # Lấy tổng số PRs thực tế
         actual_total = prs.totalCount
-        logger.info(f"Found {actual_total} PRs matching the query")
         
         # Nếu MAX_PRS = 0, lấy tất cả PRs
         if MAX_PRS == 0:
             total_count = actual_total
         else:
             total_count = min(actual_total, MAX_PRS)
-        
-        logger.info(f"Processing {total_count} PRs")
 
         prs_data = []
         developers_stats = {}
@@ -156,7 +150,6 @@ def fetch_and_parse_prs(org_name, label, since_date):
         batch_size = 30  # Tăng kích thước batch để giảm số lần gọi API
         for i in range(0, total_count, batch_size):
             current_batch_size = min(batch_size, total_count - i)
-            logger.info(f"Processing batch {i//batch_size + 1}, PRs {i+1}-{i+current_batch_size} of {total_count}")
             batch = list(prs[i:min(i + batch_size, total_count)])
 
             for pr in batch:
@@ -217,12 +210,48 @@ def fetch_and_parse_prs(org_name, label, since_date):
             'timestamp': time.time()
         }
         
-        logger.info(f"Completed processing {len(prs_data)} PRs")
         return result
 
     except Exception as e:
-        logger.error(f"Error fetching PRs: {str(e)}")
         raise
+
+# Sử dụng cache key tự động tạo từ các tham số
+def create_cache_key(org_name, label, since_date, until_date=None):
+    # Chuyển label thành chuỗi để có thể hash được
+    if isinstance(label, (list, tuple)):
+        label_str = ','.join(sorted(label)) if label else 'all'
+    else:
+        label_str = str(label) if label else 'all'
+    
+    # Tạo key cho cache
+    key = f"{org_name}_{label_str}_{since_date}"
+    if until_date:
+        key += f"_{until_date}"
+    
+    return key
+
+# Cache dictionary để lưu kết quả
+_pr_cache = {}
+_cache_timestamp = {}
+
+def fetch_and_parse_prs(org_name, label, since_date, until_date=None):
+    """Fetch và parse PRs với cache tự quản lý"""
+    # Tạo cache key
+    cache_key = create_cache_key(org_name, label, since_date, until_date)
+
+    # Kiểm tra cache
+    current_time = time.time()
+    if cache_key in _pr_cache and current_time - _cache_timestamp.get(cache_key, 0) < CACHE_TIMEOUT:
+        return _pr_cache[cache_key]
+    
+    # Nếu không có trong cache hoặc cache đã hết hạn, lấy dữ liệu mới
+    result = fetch_and_parse_prs_internal(org_name, label, since_date, until_date)
+    
+    # Lưu vào cache
+    _pr_cache[cache_key] = result
+    _cache_timestamp[cache_key] = current_time
+    
+    return result
 
 
 @app.route('/health')
@@ -259,7 +288,6 @@ def health_check():
         }
         return jsonify(status)
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
         return jsonify({
             'status': 'unhealthy',
             'error': str(e),
@@ -270,25 +298,39 @@ def health_check():
 def index():
     # Lấy tham số từ request hoặc sử dụng giá trị mặc định
     org_name = request.args.get('org', 'AperoVN')
-    label = request.args.get('label', 'AI Generate')
-    since_date = request.args.get('since', DEFAULT_SINCE_DATE)
     
-    logger.info(f"Processing request for org={org_name}, label={label}, since={since_date}")
+    # Xử lý labels (có thể có nhiều label)
+    labels = request.args.getlist('label')
+    if not labels:
+        # Nếu không có label nào được chọn, sử dụng giá trị mặc định
+        default_label = request.args.get('default_label', 'AI Generate')
+        if default_label:
+            labels = [default_label]
+    
+    since_date = request.args.get('since', DEFAULT_SINCE_DATE)
+    until_date = request.args.get('until', '')
+    
+    # Xử lý yêu cầu
     
     if not GITHUB_TOKEN:
         error_message = "GitHub Token chưa được cấu hình. Vui lòng kiểm tra biến môi trường GITHUB_TOKEN."
-        logger.error(error_message)
         return render_template('error.html', error=error_message, **get_system_info())
 
     try:
         start_time = time.time()
-        logger.info(f"Starting data fetch at {datetime.now().isoformat()}")
+        
+        # Lấy danh sách labels
+        available_labels = []
+        try:
+            available_labels = get_recent_pr_labels(org_name)
+        except Exception:
+            pass
         
         # Sử dụng cache để lấy dữ liệu
-        cache_result = fetch_and_parse_prs(org_name, label, since_date)
+        # Chuyển danh sách labels thành tuple hoặc chuỗi để có thể cache được
+        cache_result = fetch_and_parse_prs(org_name, labels, since_date, until_date)
         
         fetch_time = time.time() - start_time
-        logger.info(f"Data fetch completed in {fetch_time:.2f} seconds")
 
         # Kết hợp dữ liệu với system info
         template_data = {
@@ -296,18 +338,16 @@ def index():
             'prs': cache_result['prs_data'],
             'stats': cache_result['stats'],
             'org_name': org_name,
-            'label': label,
+            'labels': labels,  # Danh sách labels đã chọn
             'since_date': since_date,
+            'until_date': until_date,
+            'available_labels': available_labels,
             'fetch_time': f"{fetch_time:.2f}s"
         }
 
         return render_template('result.html', **template_data)
 
     except Exception as e:
-        # Ghi log chi tiết lỗi
-        logger.error(f"Exception in index route: {str(e)}")
-        logger.error(traceback.format_exc())
-        
         # Chuẩn bị thông báo lỗi chi tiết
         error_type = type(e).__name__
         error_message = f"Lỗi khi xử lý dữ liệu: {error_type}: {str(e)}"
@@ -323,17 +363,97 @@ def index():
 @app.route('/clear-cache', methods=['GET'])
 def clear_cache():
     try:
-        fetch_and_parse_prs.cache_clear()
+        global _pr_cache, _cache_timestamp
+        _pr_cache = {}
+        _cache_timestamp = {}
         return jsonify({
             'status': 'success',
             'message': 'Cache cleared successfully',
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
-        logger.error(f"Error clearing cache: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Error clearing cache: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+# Lấy danh sách labels của một organization
+@lru_cache(maxsize=5)
+def get_organization_labels(org_name):
+    """Lấy danh sách các labels phổ biến trong các repository của organization"""
+    try:
+        g = Github(GITHUB_TOKEN, timeout=GITHUB_TIMEOUT)
+        org = g.get_organization(org_name)
+        
+        # Lấy các repository của organization
+        repos = org.get_repos()[:10]  # Giới hạn số lượng repo để tránh timeout
+        
+        # Tập hợp để lưu trữ các labels duy nhất
+        all_labels = set()
+        
+        # Lấy labels từ mỗi repository
+        for repo in repos:
+            try:
+                repo_labels = repo.get_labels()
+                for label in repo_labels:
+                    all_labels.add(label.name)
+            except Exception as e:
+                print(f"Error fetching labels from repo {repo.name}: {e}")
+
+        # Trả về danh sách labels đã sắp xếp
+        return sorted(list(all_labels))
+    except Exception:
+        return []
+
+# Lấy danh sách labels từ các PRs gần đây
+@lru_cache(maxsize=5)
+def get_recent_pr_labels(org_name, limit=100):
+    """Lấy danh sách các labels từ các PRs gần đây"""
+    try:
+        g = Github(GITHUB_TOKEN, timeout=GITHUB_TIMEOUT)
+        
+        # Tìm kiếm các PRs gần đây
+        query = f'org:{org_name} is:pr sort:created-desc'
+        prs = g.search_issues(query=query)
+        
+        # Tập hợp để lưu trữ các labels duy nhất
+        all_labels = set()
+        
+        # Lấy labels từ mỗi PR
+        count = 0
+        for pr in prs:
+            if count >= limit:
+                break
+                
+            for label in pr.labels:
+                all_labels.add(label.name)
+                
+            count += 1
+        
+        # Trả về danh sách labels đã sắp xếp
+        return sorted(list(all_labels))
+    except Exception:
+        return []
+
+# Thêm route để lấy danh sách labels
+@app.route('/labels', methods=['GET'])
+def get_labels():
+    try:
+        org_name = request.args.get('org', 'AperoVN')
+        labels = get_recent_pr_labels(org_name)
+        
+        return jsonify({
+            'status': 'success',
+            'labels': labels,
+            'count': len(labels),
+            'organization': org_name,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error getting labels: {str(e)}',
             'timestamp': datetime.now().isoformat()
         }), 500
 
@@ -354,7 +474,6 @@ def show_config():
         }
         return jsonify(config)
     except Exception as e:
-        logger.error(f"Error showing config: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Error showing config: {str(e)}',
@@ -366,14 +485,6 @@ if __name__ == '__main__':
     port = int(os.getenv('PORT', '5000'))
     debug = os.getenv('FLASK_DEBUG', '0') == '1'
 
-    # Log cấu hình khi khởi động
-    logger.info(f"Starting application on port {port}")
-    logger.info(f"Debug mode: {debug}")
-    logger.info(f"GitHub token status: {'configured' if GITHUB_TOKEN else 'missing'}")
-    logger.info(f"Max PRs per request: {MAX_PRS}")
-    logger.info(f"Cache timeout: {CACHE_TIMEOUT} seconds")
-    logger.info(f"GitHub API timeout: {GITHUB_TIMEOUT} seconds")
-    logger.info(f"Default since date: {DEFAULT_SINCE_DATE}")
-    logger.info(f"Python version: {sys.version}")
+    # Khởi động ứng dụng
 
     app.run(debug=debug, host='0.0.0.0', port=port)

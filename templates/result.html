@@ -23,6 +23,77 @@
 <body>
 <div class="container-fluid mt-5">
     <h1 class="mb-4">Pull Request Analysis Results</h1>
+    
+    <!-- Form lọc -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Bộ lọc</h5>
+            <form method="GET" action="/" id="filterForm" class="row g-3">
+                <div class="col-md-3">
+                    <label for="org" class="form-label">Organization</label>
+                    <input type="text" class="form-control" id="org" name="org" value="{{ org_name }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Labels</label>
+                    <div class="card p-2" style="max-height: 200px; overflow-y: auto;">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="selectAllLabels">
+                            <label class="form-check-label" for="selectAllLabels">
+                                <strong>Chọn tất cả</strong>
+                            </label>
+                        </div>
+                        <hr class="my-1">
+                        <div id="labelCheckboxes">
+                            {% for available_label in available_labels %}
+                            <div class="form-check">
+                                <input class="form-check-input label-checkbox" type="checkbox" 
+                                       id="label-{{ loop.index }}" name="label" value="{{ available_label }}" 
+                                       {% if available_label in labels %}checked{% endif %}>
+                                <label class="form-check-label" for="label-{{ loop.index }}">
+                                    {{ available_label }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <label for="since" class="form-label">Từ ngày</label>
+                    <input type="date" class="form-control" id="since" name="since" value="{{ since_date }}">
+                </div>
+                <div class="col-md-2">
+                    <label for="until" class="form-label">Đến ngày</label>
+                    <input type="date" class="form-control" id="until" name="until" value="{{ until_date }}">
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">Lọc</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Thông tin về bộ lọc -->
+    <div class="alert alert-info mb-4">
+        <div class="row">
+            <div class="col-md-8">
+                <strong>Bộ lọc hiện tại:</strong> 
+                Organization: <span class="badge bg-secondary">{{ org_name }}</span> 
+                Labels: 
+                {% if labels %}
+                    {% for label in labels %}
+                    <span class="badge bg-secondary">{{ label }}</span> 
+                    {% endfor %}
+                {% else %}
+                    <span class="badge bg-secondary">Tất cả</span>
+                {% endif %}
+                Thời gian: <span class="badge bg-secondary">{{ since_date }}{% if until_date %} đến {{ until_date }}{% endif %}</span>
+            </div>
+            <div class="col-md-4 text-end">
+                <span class="badge bg-primary">Tổng số PRs tìm thấy: {{ stats.total_prs_found }}</span>
+                <span class="badge bg-success">Thời gian tìm kiếm: {{ fetch_time }}</span>
+            </div>
+        </div>
+    </div>
 
     <!-- Tổng quan -->
     <div class="row mb-4">
@@ -271,12 +342,12 @@
             {
                 label: 'Ước tính',
                 data: [{{ stats.total_estimate }}],
-                backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                backgroundColor: 'rgba(54, 162, 235, 0.5)'
             },
             {
                 label: 'Thực tế',
                 data: [{{ stats.total_actual }}],
-                backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                backgroundColor: 'rgba(255, 99, 132, 0.5)'
             }
         ]
     };
@@ -295,6 +366,105 @@
                     }
                 }
             }
+        }
+    });
+    
+    // Add event listeners for the date inputs and label checkboxes
+    document.addEventListener('DOMContentLoaded', function() {
+        // Format date inputs with default values if not set
+        const sinceInput = document.getElementById('since');
+        const untilInput = document.getElementById('until');
+        
+        // Set default values if empty
+        if (!sinceInput.value) {
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            sinceInput.value = thirtyDaysAgo.toISOString().split('T')[0];
+        }
+        
+        // Handle select all checkbox
+        const selectAllCheckbox = document.getElementById('selectAllLabels');
+        const labelCheckboxes = document.querySelectorAll('.label-checkbox');
+        
+        if (selectAllCheckbox) {
+            // Check if all checkboxes are already checked
+            let allChecked = true;
+            labelCheckboxes.forEach(checkbox => {
+                if (!checkbox.checked) allChecked = false;
+            });
+            selectAllCheckbox.checked = allChecked;
+            
+            // Add event listener to select all checkbox
+            selectAllCheckbox.addEventListener('change', function() {
+                const isChecked = this.checked;
+                labelCheckboxes.forEach(checkbox => {
+                    checkbox.checked = isChecked;
+                });
+            });
+            
+            // Add event listeners to individual checkboxes
+            labelCheckboxes.forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    // Check if all checkboxes are checked
+                    let allChecked = true;
+                    labelCheckboxes.forEach(cb => {
+                        if (!cb.checked) allChecked = false;
+                    });
+                    selectAllCheckbox.checked = allChecked;
+                });
+            });
+        }
+        
+        // If no labels are available, fetch them via AJAX
+        const labelCheckboxesContainer = document.getElementById('labelCheckboxes');
+        if (labelCheckboxesContainer && labelCheckboxesContainer.children.length === 0) {
+            fetch('/labels?org=' + document.getElementById('org').value)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        // Clear existing checkboxes
+                        labelCheckboxesContainer.innerHTML = '';
+                        
+                        // Add new checkboxes
+                        data.labels.forEach((label, index) => {
+                            const div = document.createElement('div');
+                            div.className = 'form-check';
+                            
+                            const input = document.createElement('input');
+                            input.className = 'form-check-input label-checkbox';
+                            input.type = 'checkbox';
+                            input.id = 'label-' + (index + 1);
+                            input.name = 'label';
+                            input.value = label;
+                            
+                            // Check if this label is in the selected labels
+                            const selectedLabels = {{ labels|tojson|safe }};
+                            if (selectedLabels.includes(label)) {
+                                input.checked = true;
+                            }
+                            
+                            const labelElement = document.createElement('label');
+                            labelElement.className = 'form-check-label';
+                            labelElement.htmlFor = 'label-' + (index + 1);
+                            labelElement.textContent = label;
+                            
+                            div.appendChild(input);
+                            div.appendChild(labelElement);
+                            labelCheckboxesContainer.appendChild(div);
+                            
+                            // Add event listener to update select all checkbox
+                            input.addEventListener('change', function() {
+                                // Check if all checkboxes are checked
+                                let allChecked = true;
+                                document.querySelectorAll('.label-checkbox').forEach(cb => {
+                                    if (!cb.checked) allChecked = false;
+                                });
+                                selectAllCheckbox.checked = allChecked;
+                            });
+                        });
+                    }
+                })
+                .catch(error => console.error('Error fetching labels:', error));
         }
     });
 </script>
