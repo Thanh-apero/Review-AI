@@ -73,7 +73,7 @@ def parse_pr_info(pr):
     issue_number = issue_match.group(0).upper() if issue_match else "N/A"  # Chuẩn hóa về dạng viết hoa
 
     # Parse estimate time từ body
-    time_pattern = r'(?:Estimate|Actual)\s*Time:?\s*(\d+[hpm])'
+    time_pattern = r'(?:Est(?:imate)?|Actual)\s*Time:?\s*(\d+[hpm])'
     times = re.finditer(time_pattern, pr.body or '', re.IGNORECASE)
 
     estimate_time = "N/A"
@@ -101,7 +101,6 @@ def parse_pr_info(pr):
         'actual_hours': actual_hours
     }
     return parsed_result
-
 
 def fetch_and_parse_prs_internal(org_name, label, since_date, until_date=None):
     """Fetch và parse PRs - hàm nội bộ không có cache"""
