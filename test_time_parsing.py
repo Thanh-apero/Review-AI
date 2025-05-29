@@ -35,12 +35,17 @@ def convert_to_hours(time_str):
 
     return 0
 
-# Test with the example from the issue
+# Test with the examples from the issue
 test_str = """
 Issued tickets
 AIP201-106
 Estimate Time: 1,5h
 Actual Time: 1h
+
+Feature tickets
+AIP201-89
+Est Time: 3h
+Actual Time: 3h
 """
 
 pattern = r'(?:Est(?:imate)?|Actual)\s*Time:?\s*([0-9]+([.,][0-9]+)?)[hpm]'
@@ -62,7 +67,8 @@ for match in times:
     elif 'm' in full_match.lower() or 'p' in full_match.lower():
         time_value = time_value + 'm'
         
-    if 'estimate' in full_match.lower():
+    # Check if it's an estimate time (both full 'estimate' and abbreviated 'est' forms)
+    if 'est' in full_match.lower() and not full_match.lower().startswith('actual'):
         estimate_time = time_value
         print(f"Found estimate time: {time_value}")
     elif 'actual' in full_match.lower():

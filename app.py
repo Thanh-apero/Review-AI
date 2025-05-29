@@ -102,7 +102,8 @@ def parse_pr_info(pr):
         elif 'm' in full_match.lower() or 'p' in full_match.lower():
             time_value = time_value + 'm'
             
-        if 'estimate' in full_match.lower():
+        # Check if it's an estimate time (both full 'estimate' and abbreviated 'est' forms)
+        if 'est' in full_match.lower() and not full_match.lower().startswith('actual'):
             estimate_time = time_value
         elif 'actual' in full_match.lower():
             actual_time = time_value
