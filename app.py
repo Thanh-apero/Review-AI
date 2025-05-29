@@ -53,6 +53,18 @@ def convert_to_hours(time_str):
     number_match = re.fullmatch(r'([0-9]+([.,][0-9]+)?)', time_str)
     if number_match:
         return float(number_match.group(1).replace(',', '.'))
+        
+    # Kiểm tra thêm định dạng 'Xh Ym' hoặc 'X,Yh'
+    complex_time_match = re.fullmatch(r'([0-9]+)h\s+([0-9]+)[mp]', time_str)
+    if complex_time_match:
+        hours = float(complex_time_match.group(1))
+        minutes = float(complex_time_match.group(2))
+        return hours + round(minutes / 60, 2)
+        
+    # Kiểm tra định dạng '1,5' hoặc '1.5' không có đơn vị
+    decimal_match = re.search(r'([0-9]+[.,][0-9]+)', time_str)
+    if decimal_match:
+        return float(decimal_match.group(1).replace(',', '.'))
 
     return 0
 
