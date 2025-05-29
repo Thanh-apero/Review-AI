@@ -85,17 +85,27 @@ def parse_pr_info(pr):
     issue_number = issue_match.group(0).upper() if issue_match else "N/A"  # Chuẩn hóa về dạng viết hoa
 
     # Parse estimate time từ body
-    time_pattern = r'(?:Est(?:imate)?|Actual)\s*Time:?\s*(([0-9]+([.,][0-9]+)?)[hpm])'
+    time_pattern = r'(?:Est(?:imate)?|Actual)\s*Time:?\s*([0-9]+([.,][0-9]+)?)[hpm]'
     times = re.finditer(time_pattern, pr.body or '', re.IGNORECASE)
 
     estimate_time = "N/A"
     actual_time = "N/A"
 
     for match in times:
-        if 'estimate' in match.group(0).lower():
-            estimate_time = match.group(1)
-        elif 'actual' in match.group(0).lower():
-            actual_time = match.group(1)
+        # Extract the full time value including the unit (h, m, p)
+        full_match = match.group(0)
+        time_value = match.group(1)  # This is just the number part (e.g., "1,5")
+        
+        # Add the unit back to make it compatible with convert_to_hours
+        if 'h' in full_match.lower():
+            time_value = time_value + 'h'
+        elif 'm' in full_match.lower() or 'p' in full_match.lower():
+            time_value = time_value + 'm'
+            
+        if 'estimate' in full_match.lower():
+            estimate_time = time_value
+        elif 'actual' in full_match.lower():
+            actual_time = time_value
 
     # Chuyển đổi thời gian sang giờ
     estimate_hours = convert_to_hours(estimate_time)
