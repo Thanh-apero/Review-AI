@@ -85,7 +85,7 @@ def parse_pr_info(pr):
     issue_number = issue_match.group(0).upper() if issue_match else "N/A"  # Chuẩn hóa về dạng viết hoa
 
     # Parse estimate time từ body
-    time_pattern = r'(?:Est(?:imate)?|Actual)\s*Time:?\s*(\d+[hpm])'
+    time_pattern = r'(?:Est(?:imate)?|Actual)\s*Time:?\s*(([0-9]+([.,][0-9]+)?)[hpm])'
     times = re.finditer(time_pattern, pr.body or '', re.IGNORECASE)
 
     estimate_time = "N/A"
