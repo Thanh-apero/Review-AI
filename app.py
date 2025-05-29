@@ -39,23 +39,23 @@ def convert_to_hours(time_str):
 
     time_str = time_str.strip().lower()
 
-    # Nếu là phút (phải kiểm tra trước để tránh hiểu nhầm thành giờ)
-    minute_match = re.fullmatch(r'(\d+)[mp]', time_str, re.IGNORECASE)
+    # Nếu là phút (30p, 45m)
+    minute_match = re.fullmatch(r'(\d+)[mp]', time_str)
     if minute_match:
-        minutes = float(minute_match.group(1))
-        return round(minutes / 60, 2)
+        return round(float(minute_match.group(1)) / 60, 2)
 
-    # Nếu là giờ có đơn vị rõ ràng
-    hour_match = re.fullmatch(r'(\d+)h', time_str, re.IGNORECASE)
+    # Nếu là giờ với định dạng số thực có đơn vị (1.5h, 1,5h)
+    hour_match = re.fullmatch(r'([0-9]+([.,][0-9]+)?)h', time_str)
     if hour_match:
-        return float(hour_match.group(1))
+        return float(hour_match.group(1).replace(',', '.'))
 
-    # Nếu chỉ là số, mặc định hiểu là giờ
-    number_match = re.fullmatch(r'(\d+)', time_str, re.IGNORECASE)
+    # Nếu là số thực không đơn vị (1.5, 1,5) hoặc số nguyên
+    number_match = re.fullmatch(r'([0-9]+([.,][0-9]+)?)', time_str)
     if number_match:
-        return float(number_match.group(1))
+        return float(number_match.group(1).replace(',', '.'))
 
     return 0
+
 
 def get_project_id(issue_number):
     """Trích xuất ID project từ issue number (VD: AIP123-456 -> AIP123)"""
